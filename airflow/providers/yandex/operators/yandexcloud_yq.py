@@ -53,23 +53,30 @@ class YQExecuteQueryOperator(SQLExecuteQueryOperator):
         description: str | None = None,
         folder_id: str | None = None,
         connection_id: str | None = None,
+        public_ssh_key: str | None = None,
+        service_account_id: str | None = None,
         deferrable: bool = conf.getboolean("operators", "default_deferrable", fallback=False),
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-        self.folder_id = folder_id
-        self.yandex_conn_id = connection_id
         self.name = name
         self.description = description
         # self.sql = sql
         self.type = type
         self.deferrable = deferrable
+        self.folder_id = folder_id
+        self.connection_id = connection_id
+        self.public_ssh_key = public_ssh_key
+        self.service_account_id = service_account_id
 
         self.hook: YQHook | None = None
 
     def execute(self, context: Context) -> None:
         self.hook = YQHook(
-            yandex_conn_id=self.yandex_conn_id
+            yandex_conn_id=self.connection_id,
+            default_folder_id=self.folder_id,
+            default_public_ssh_key=self.public_ssh_key,
+            default_service_account_id=self.service_account_id
         )
 
         self.hook.start_execute_query(self.type, self.sql, self.name, self.description)
@@ -85,9 +92,12 @@ class YQExecuteQueryOperator(SQLExecuteQueryOperator):
         if True:
             self.defer(
                 trigger=YQQueryStatusTrigger(
-                    poll_interval=timedelta(seconds=2),
+                    poll_interval=timedelta(seconds=2).seconds,
                     query_id=self.hook.query_id,
-                    yandex_conn_id=self.yandex_conn_id
+                    connection_id=self.connection_id,
+                    folder_id=self.folder_id,
+                    public_ssh_key=self.public_ssh_key,
+                    service_account_id=self.service_account_id
                 ),
                 method_name="execute_complete",
             )
@@ -97,12 +107,19 @@ class YQExecuteQueryOperator(SQLExecuteQueryOperator):
 
     def execute_complete(self, context: Context, event: dict[str, str | list[str]] | None = None) -> None:
         if "status" in event and event["status"]!="COMPLETED":
-            msg = f"{event['status']}: {event['message']}"
+            msg = None
+            if 'message' in event:
+                msg = f"{event['status']}: {event['message']}"
+            else:
+                msg = event["status"]
             raise AirflowException(msg)
         else:
             query_id = event["query_id"]
-            yandex_conn_id = event["yandex_conn_id"]
-            hook = YQHook(yandex_conn_id=yandex_conn_id)
+
+            hook = YQHook(  connection_id=event["connection_id"],
+                            default_folder_id=event["folder_id"],
+                            default_public_ssh_key=event["public_ssh_key"],
+                            default_service_account_id=event["service_account_id"])
 
             result = hook.get_query_result(query_id)
             self.log.info("%s completed successfully.", self.task_id)

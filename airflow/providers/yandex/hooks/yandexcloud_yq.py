@@ -43,7 +43,6 @@ from enum import Enum
 import jwt
 import time
 from datetime import timedelta, datetime
-import pandas as pd
 import aiohttp
 
 class QueryType(Enum):
@@ -160,7 +159,7 @@ class YQHook(YandexCloudBaseHook):
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(url) as response:
                 status_code = response.status
-                assert resp.status == 200
+                assert status_code == 200
                 resp = await response.json()
                 return resp["status"]
 
@@ -188,44 +187,6 @@ class YQHook(YandexCloudBaseHook):
                 return status
 
             time.sleep(2)
-
-    def get_iam_token(self) -> str:
-        credentials = self._get_credentials()
-
-        if "oauth" in credentials:
-            return self._resolve_oauth(credentials["oauth"])
-        elif "service_account_key" in credentials:
-            return self._resolve_service_account_key(credentials["service_account_key"])
-        else:
-            raise AirflowException(f"Unknown credentials type {credentials.keys()}")
-
-    def _resolve_oauth(self, token: str) -> str:
-        pass
-
-    def _resolve_service_account_key(self, sa_info) -> str:
-        session = YQHook.create_session()
-
-        api = 'https://iam.api.cloud.yandex.net/iam/v1/tokens'
-        now = int(time.time())
-        payload = {
-                'aud': api,
-                'iss': sa_info["service_account_id"],
-                'iat': now,
-                'exp': now + 360}
-
-        # Формирование JWT.
-        encoded_token = jwt.encode(
-            payload,
-            sa_info["private_key"],
-            algorithm='PS256',
-            headers={'kid': sa_info["id"]})
-
-        print(sa_info)
-        data = {"jwt": encoded_token}
-        iam_response = session.post(api, json=data)
-        iam_response.raise_for_status()
-
-        return iam_response.json()["iamToken"]
 
     @staticmethod
     def create_session(iamtoken: str | None = None) -> requests.Session:

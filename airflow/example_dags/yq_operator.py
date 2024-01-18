@@ -21,18 +21,24 @@ from __future__ import annotations
 import datetime
 
 import pendulum
+import ydb
+import dateutil
 
 from airflow.models.dag import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.providers.yandex.operators.yandexcloud_yq import YQExecuteQueryOperator
+from airflow.providers.yandex.operators.yandexcloud_ydb import YDBBulkUpsertOperator
 from airflow.operators.python import PythonOperator
+from airflow.decorators import task
+import base64
 # import airflow.providers.yandex.operators.yandexcloud_dataproc
 
 with DAG(
     dag_id="yq_operator",
-    schedule="0 0 * * *",
-    start_date=pendulum.datetime(2021, 1, 1, tz="UTC"),
+    # schedule="@daily",
+    schedule_interval='30 2 * * *',
+    start_date=pendulum.datetime(2023, 1, 16, 19, 15, tz="UTC"),
     catchup=False,
     dagrun_timeout=datetime.timedelta(minutes=60)
 ) as dag:
@@ -52,27 +58,222 @@ with DAG(
     # # [END howto_operator_bash_template]
     # also_run_this >> run_this_last
 
-    def process_result(**kwargs):
+        # @task
+        # def yq_read_data():
+        #     operator = YQExecuteQueryOperator(task_id="samplequery2", sql="select 22 as d, 33 as t")
+        #     return operator.execute()
+
+        # @task
+        # def ydb_write_data(yq_data):
+        #     ydb_bulk_insert = YDBBulkUpsertOperator(task_id="bulk_insert",
+        #                                             endpoint="grpcs://ydb.serverless.yandexcloud.net:2135",
+        #                                             database="/ru-central1/b1g8skpblkos03malf3s/etndta0jk4us20e557i7",
+        #                                             table="my_table",
+        #                                             column_types={"id": ydb.PrimitiveType.Uint64,
+        #                                                     "name": ydb.PrimitiveType.Utf8},
+        #                                             values=[{"id":1,"name":"v"}])
+        #     return ydb_bulk_insert.execute()
+
+        # data = yq_read_data()
+        # ydb_write_data(data)
+
+    def base64ToString(b):
+        return base64.b64decode(b).decode('utf-8')
+
+    def get_column_index(columns, name):
+        for index, column in enumerate(columns):
+            if column["name"] == name:
+                return index
+
+    def get_col_by_name(row, columns, name):
+        index = get_column_index(columns, name)
+        value = row[index]
+        print(value)
+        return value
+
+    def process_query_count_result(**kwargs):
         ti = kwargs['ti']
-        result = ti.xcom_pull(task_ids='samplequery')
+        result = ti.xcom_pull(task_ids='get_queries_count')
         print(result)
 
-        df = YQExecuteQueryOperator.to_dataframe(result)
-        print(df)
+        if len(result["rows"]) == 0:
+            return
+
+        # df = YQExecuteQueryOperator.to_dataframe(result)
+        # print(df)
+
+        columns = result["columns"]
+        result_rows = []
+
+        for row in result["rows"]:
+            output_row = dict()
+
+            folder_id = base64ToString(get_col_by_name(row, columns, "folder_id")[0])
+            query_id = base64ToString(get_col_by_name(row, columns, "query_id")[0])
+            status = base64ToString(get_col_by_name(row, columns, "status")[0])
+            ts = base64ToString(get_col_by_name(row, columns, "ts")[0])
+
+            output_row["folder_id"] = folder_id
+            output_row["query_id"] = folder_id
+            output_row["status"] = status
+            print(ts)
+
+            output_row["ts"] = dateutil.parser.isoparse(ts).replace(tzinfo=None)
+
+            result_rows.append(output_row)
+
+        column_types = {"ts": ydb.PrimitiveType.Timestamp,
+                        "folder_id": ydb.PrimitiveType.Utf8,
+                        "query_id": ydb.PrimitiveType.Utf8,
+                        "status": ydb.PrimitiveType.Utf8}
+
+        cols = result["columns"]
+
+        op = YDBBulkUpsertOperator(task_id="bulk_insert",
+                                            endpoint="grpcs://ydb.serverless.yandexcloud.net:2135",
+                                            database="/ru-central1/b1g8skpblkos03malf3s/etnmtke7n0hstlgf6nic",
+                                            table="query_count",
+                                            column_types=column_types,
+                                            values=result_rows)
+        op.execute(dict())
+
+    def process_result(**kwargs):
+        ti = kwargs['ti']
+        result = ti.xcom_pull(task_ids='samplequery2')
+        print(result)
+
+        if len(result["rows"]) == 0:
+            return
+
+        # df = YQExecuteQueryOperator.to_dataframe(result)
+        # print(df)
+
+        columns = result["columns"]
+        result_rows = []
+
+        for row in result["rows"]:
+            output_row = dict()
+
+            folder_id = base64ToString(get_col_by_name(row, columns, "folder_id")[0])
+            status = base64ToString(get_col_by_name(row, columns, "status")[0])
+            ts = base64ToString(get_col_by_name(row, columns, "ts")[0])
+            ingress_bytes = get_col_by_name(row, columns, "ingress_bytes")[0]
+
+            output_row["folder_id"] = folder_id
+            output_row["status"] = status
+            print(ts)
+
+            output_row["ts"] = dateutil.parser.isoparse(ts).replace(tzinfo=None)
+            output_row["ingress_bytes"] = ingress_bytes
+
+            result_rows.append(output_row)
+
+        column_types = {"ts": ydb.PrimitiveType.Timestamp,
+                        "folder_id": ydb.PrimitiveType.Utf8,
+                        "status": ydb.PrimitiveType.Utf8,
+                        "ingress_bytes": ydb.PrimitiveType.Uint64,}
+
+        cols = result["columns"]
+
+        op = YDBBulkUpsertOperator(task_id="bulk_insert",
+                                            endpoint="grpcs://ydb.serverless.yandexcloud.net:2135",
+                                            database="/ru-central1/b1g8skpblkos03malf3s/etnmtke7n0hstlgf6nic",
+                                            table="query_stat",
+                                            column_types=column_types,
+                                            values=result_rows)
+        op.execute(dict())
 
 
-    yq_operator2 = YQExecuteQueryOperator(task_id="samplequery2", sql="select 22 as d, 33 as t")
+    # ydb_bulk_insert >> run_this_last
+
+    query = """
+$parse_ingress_bytes = ($m) -> {
+    $t = "IngressBytes: [";
+    $start = Find($m, $t);
+    $end = Find($m, "]", $start);
+    return Cast(Substring($m, $start+LEN($t), $end-$start-LEN($t)) as Uint64);
+    };
+
+$parse_folder_id = ($m) -> {
+    $t = "scope: [yandexcloud://";
+    $start = Find($m, $t);
+    $end = Find($m, "]", $start);
+    return Substring($m, $start+LEN($t), $end-$start-LEN($t));
+    };
+
+$parse_status = ($m) -> {
+    $t = ", status:";
+    $start = Find($m, $t);
+    $end = LEN($m);
+    return String::Strip(Substring($m, $start+LEN($t), $end-$start-LEN($t)));
+    };
+
+select * from (
+select `@timestamp` as ts, $parse_ingress_bytes(message) as ingress_bytes, $parse_folder_id(message) as folder_id, $parse_status(message) as status from (select
+   `yq_prod_logs_cold_projected`.*
+FROM
+   `yq_prod_logs_cold_projected`)
+where component="YQ_AUDIT" and message like "FinalStatus%"
+and message like "%IngressBytes%"
+and `date` between Date("{{ data_interval_start | ds }}") and Date("{{ data_interval_end | ds }}")
+)
+where COALESCE(folder_id,"") != "";
+
+"""
+
+    yq_operator2 = YQExecuteQueryOperator(task_id="samplequery2", sql=query, connection_id="yq_logs_connection")
     yq_operator2 >> run_this_last
 
-    yq_operator3 = YQExecuteQueryOperator(task_id="samplequery3", sql="select 33 as d, 44 as t")
-    yq_operator3 >> run_this_last
+    query_count_queries = """
+$parse_folder_id = ($m) -> {
+    $t = "scope: [yandexcloud://";
+    $start = Find($m, $t);
+    $end = Find($m, "]", $start);
+    return Substring($m, $start+LEN($t), $end-$start-LEN($t));
+    };
 
-    yq_operator4 = YQExecuteQueryOperator(task_id="samplequery4", sql="select 33 as d, 44 as t")
-    yq_operator4 >> run_this_last
+$parse_status = ($m) -> {
+    $t = ", status:";
+    $start = Find($m, $t);
+    $end = LEN($m);
+    return String::Strip(Substring($m, $start+LEN($t), $end-$start-LEN($t)));
+    };
+
+$parse_query_id = ($m) -> {
+    $t = "query id: [";
+    $start = Find($m, $t);
+    $end = Find($m, "]", $start);
+    return Substring($m, $start+LEN($t), $end-$start-LEN($t));
+    };
+
+select * from (
+select `@timestamp` as ts, $parse_folder_id(message) as folder_id, $parse_status(message) as status, $parse_query_id(message) as query_id from (select
+   `yq_prod_logs_cold_projected`.*
+FROM
+   `yq_prod_logs_cold_projected`)
+where component="YQ_AUDIT" and message like "FinalStatus%"
+and `date` between Date("{{ data_interval_start | ds }}") and Date("{{ data_interval_end | ds }}")
+)
+where COALESCE(folder_id,"") != "";
+
+"""
+
+    process_query_count_task = PythonOperator(  task_id='process_query_count_result',
+                                                python_callable=process_query_count_result,
+                                                provide_context=True)
+
+    yq_operator_queries_count = YQExecuteQueryOperator(task_id="get_queries_count", sql=query_count_queries, connection_id="yq_logs_connection")
+    yq_operator_queries_count >> process_query_count_task
+
+    # yq_operator3 = YQExecuteQueryOperator(task_id="samplequery3", sql="select 33 as d, 44 as t")
+    # yq_operator3 >> run_this_last
+
+    # yq_operator4 = YQExecuteQueryOperator(task_id="samplequery4", sql="select 33 as d, 44 as t")
+    # # yq_operator4 >> ydb_bulk_insert
 
 
-    yq_operator = YQExecuteQueryOperator(task_id="samplequery", sql="select 1")
-    yq_operator >> yq_operator2
+    # yq_operator = YQExecuteQueryOperator(task_id="samplequery", sql="select 1")
+    # yq_operator >> yq_operator2
 
 
     process_result_task = PythonOperator(
@@ -80,7 +281,7 @@ with DAG(
             python_callable=process_result,
             provide_context=True)
 
-    yq_operator >> process_result_task
+    yq_operator2 >> process_result_task
 
 
 

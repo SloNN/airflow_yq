@@ -7,6 +7,7 @@ secrets.py
 
 # Airflow sqlite databases
 airflow.db
+yarn.lock
 
 # Airflow temporary artifacts
 airflow/git_version

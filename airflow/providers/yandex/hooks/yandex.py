@@ -18,6 +18,10 @@ from __future__ import annotations
 
 import json
 import warnings
+import requests
+import time
+import jwt
+from requests.packages.urllib3.util.retry import Retry
 from typing import Any
 
 import yandexcloud
@@ -195,3 +199,62 @@ class YandexCloudBaseHook(BaseHook):
         if prefixed_name in self.extras:
             return self.extras[prefixed_name]
         return default
+
+    def get_iam_token(self) -> str:
+        credentials = self._get_credentials()
+
+        if "oauth" in credentials:
+            return YandexCloudBaseHook._resolve_oauth(credentials["oauth"])
+        elif "service_account_key" in credentials:
+            return YandexCloudBaseHook._resolve_service_account_key(credentials["service_account_key"])
+        else:
+            raise AirflowException(f"Unknown credentials type {credentials.keys()}")
+
+    @staticmethod
+    def _resolve_oauth(self, token: str) -> str:
+        pass
+
+    @staticmethod
+    def _resolve_service_account_key(sa_info) -> str:
+        session = YandexCloudBaseHook.create_session()
+
+        api = 'https://iam.api.cloud.yandex.net/iam/v1/tokens'
+        now = int(time.time())
+        payload = {
+                'aud': api,
+                'iss': sa_info["service_account_id"],
+                'iat': now,
+                'exp': now + 360}
+
+        # Формирование JWT.
+        encoded_token = jwt.encode(
+            payload,
+            sa_info["private_key"],
+            algorithm='PS256',
+            headers={'kid': sa_info["id"]})
+
+        print(sa_info)
+        data = {"jwt": encoded_token}
+        iam_response = session.post(api, json=data)
+        iam_response.raise_for_status()
+
+        return iam_response.json()["iamToken"]
+
+    @staticmethod
+    def create_session() -> requests.Session:
+        session = requests.Session()
+        session.verify = False
+        retry = Retry(
+            backoff_factor=0.3,
+            total=10
+        )
+        session.mount(
+            'http://',
+            requests.adapters.HTTPAdapter(max_retries=retry)
+        )
+        session.mount(
+            'https://',
+            requests.adapters.HTTPAdapter(max_retries=retry)
+        )
+
+        return session

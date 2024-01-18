@@ -33,12 +33,19 @@ class YQQueryStatusTrigger(BaseTrigger):
         self,
         poll_interval: float,
         query_id: str,
-        yandex_conn_id: str,
+        folder_id: str | None = None,
+        connection_id: str | None = None,
+        public_ssh_key: str | None = None,
+        service_account_id: str | None = None,
+
     ):
         super().__init__()
         self.poll_interval = poll_interval
         self.query_id = query_id
-        self.yandex_conn_id = yandex_conn_id
+        self.connection_id = connection_id
+        self.folder_id = folder_id
+        self.public_ssh_key = public_ssh_key
+        self.service_account_id = service_account_id
 
     def serialize(self) -> tuple[str, dict[str, Any]]:
         return (
@@ -46,7 +53,10 @@ class YQQueryStatusTrigger(BaseTrigger):
             {
                 "poll_interval": self.poll_interval,
                 "query_id": self.query_id,
-                "yandex_conn_id": self.yandex_conn_id
+                "connection_id": self.connection_id,
+                "folder_id": self.folder_id,
+                "public_ssh_key": self.public_ssh_key,
+                "service_account_id": self.service_account_id
             },
         )
 
@@ -62,7 +72,10 @@ class YQQueryStatusTrigger(BaseTrigger):
                 {
                     "status": status,
                     "query_id": self.query_id,
-                    "yandex_conn_id": self.yandex_conn_id
+                    "folder_id": self.folder_id,
+                    "public_ssh_key": self.public_ssh_key,
+                    "service_account_id": self.service_account_id,
+                    "connection_id": self.connection_id
                 }
                 )
         except Exception as e:
@@ -72,7 +85,7 @@ class YQQueryStatusTrigger(BaseTrigger):
     async def get_query_status(self, query_id: str) -> dict[str, Any]:
         """Return True if the SQL query is still running otherwise return False."""
         hook = YQHook(
-            yandex_conn_id=self.yandex_conn_id
+            connection_id=self.connection_id
         )
         return await hook.get_query_status_async(query_id)
 
