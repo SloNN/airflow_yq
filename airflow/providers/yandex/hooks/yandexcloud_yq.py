@@ -90,17 +90,17 @@ class YQHook(YandexCloudBaseHook):
             raise
 
     def get_query_result(self, query_id):
-        print(f"get_query_result query_id={query_id}")
+        self.log.info(f"get_query_result query_id={query_id}")
         query_info = self.get_queryinfo(query_id)
         if query_info["status"] == "FAILED":
             issues = query_info["issues"]
             raise RuntimeError("Query failed", issues=issues)
 
         result_set_count = len(query_info["result_sets"])
-        print(f"result set count {result_set_count}")
+        self.log.debug(f"result set count {result_set_count}")
 
         query_results = self.query_results(query_id, result_set_count)
-        print(query_results)
+        self.log.debug(query_results)
         return query_results
 
     def get_pandas_df(self)-> pd.DataFrame:
@@ -108,15 +108,31 @@ class YQHook(YandexCloudBaseHook):
 
     def query_results(self, query_id:str, result_set_count:int)->object:
         results = list()
+        limit = 1000
+        offset = 0
 
         iam_token = self.get_iam_token()
         with YQHook.create_session(iam_token) as session:
             for result_index in range(0, result_set_count):
-                response = session.get(f'https://api.yandex-query.cloud.yandex.net/api/fq/v1/queries/{query_id}/results/{result_index}?project={self.default_folder_id}')
-                response.raise_for_status()
-                print(response.json())
+                columns = None
+                rows = []
+                while True:
+                    print(f"limit={limit} offset={offset}")
+                    response = session.get(f'https://api.yandex-query.cloud.yandex.net/api/fq/v1/queries/{query_id}/results/{result_index}?project={self.default_folder_id}&limit={limit}&offset={offset}')
+                    response.raise_for_status()
 
-                results.append(response.json())
+                    qresults = response.json()
+                    print(qresults)
+                    if columns is None:
+                        columns = qresults["columns"]
+
+                    rows.extend( qresults["rows"])
+                    if len(qresults["rows"]) != limit:
+                        break
+                    else:
+                        offset += limit
+
+                results.append({"rows":rows, "columns": columns})
 
         if len(results) == 1:
             return results[0]
@@ -192,6 +208,7 @@ class YQHook(YandexCloudBaseHook):
     def create_session(iamtoken: str | None = None) -> requests.Session:
         session = requests.Session()
         session.verify = False
+        session.timeout = 20
         retry = Retry(
             backoff_factor=0.3,
             total=10

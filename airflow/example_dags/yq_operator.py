@@ -88,13 +88,15 @@ with DAG(
     def get_col_by_name(row, columns, name):
         index = get_column_index(columns, name)
         value = row[index]
-        print(value)
+        # print(value)
         return value
 
     def process_query_count_result(**kwargs):
         ti = kwargs['ti']
         result = ti.xcom_pull(task_ids='get_queries_count')
-        print(result)
+        # print(result)
+
+        print(f"Incoming rows={result['rows']}")
 
         if len(result["rows"]) == 0:
             return
@@ -140,7 +142,8 @@ with DAG(
     def process_result(**kwargs):
         ti = kwargs['ti']
         result = ti.xcom_pull(task_ids='samplequery2')
-        print(result)
+
+        print(f"Incoming rows={result['rows']}")
 
         if len(result["rows"]) == 0:
             return

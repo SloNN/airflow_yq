@@ -88,8 +88,8 @@ class YQExecuteQueryOperator(SQLExecuteQueryOperator):
 
         self.log.info(f"deffered is allowed [{self.deferrable}]")
 
-        # if self.deferrable:
-        if True:
+        if self.deferrable:
+        # if True:
             self.defer(
                 trigger=YQQueryStatusTrigger(
                     poll_interval=timedelta(seconds=2).seconds,
